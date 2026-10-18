@@ -78,24 +78,53 @@ export class VoiceService {
     }
   }
 
+  private resumeInterval: any = null;
+
   private initVoices() {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       const loadVoices = () => {
         try {
-          this.cachedVoices = window.speechSynthesis.getVoices();
+          const list = window.speechSynthesis.getVoices();
+          if (list && list.length > 0) {
+            this.cachedVoices = list;
+          }
         } catch {
           this.cachedVoices = [];
         }
       };
+
       loadVoices();
+
       if (window.speechSynthesis.onvoiceschanged !== undefined) {
         window.speechSynthesis.onvoiceschanged = loadVoices;
       }
+
+      // Retry voice loading up to 4 times for browsers that delay populating getVoices()
+      let attempts = 0;
+      const retryTimer = setInterval(() => {
+        attempts++;
+        loadVoices();
+        if (this.cachedVoices.length > 0 || attempts >= 4) {
+          clearInterval(retryTimer);
+        }
+      }, 300);
     }
   }
 
   public isSupported(): boolean {
     return !!this.recognition;
+  }
+
+  public unlockAudio() {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+      } catch {
+        // Ignored
+      }
+    }
   }
 
   public startListening(
@@ -119,10 +148,13 @@ export class VoiceService {
 
     // Map language tag for speech recognition
     let langTag = 'hi-IN';
-    if (language === 'hi-IN') langTag = 'hi-IN';
-    else if (language === 'hinglish') langTag = 'hi-IN'; // hi-IN accurately captures Hinglish & Hindi
-    else if (language === 'en-IN') langTag = 'en-IN';
-    else if (language === 'en-US') langTag = 'en-US';
+    if (language === 'hi-IN' || language === 'hinglish') {
+      langTag = 'hi-IN'; // hi-IN accurately captures Hindi & Hinglish
+    } else if (language === 'en-IN') {
+      langTag = 'en-IN';
+    } else if (language === 'en-US') {
+      langTag = 'en-US';
+    }
 
     this.recognition.lang = langTag;
 
@@ -161,15 +193,6 @@ export class VoiceService {
       return;
     }
 
-    try {
-      window.speechSynthesis.cancel(); // Cancel any existing speech
-      if (window.speechSynthesis.paused) {
-        window.speechSynthesis.resume();
-      }
-    } catch {
-      // Ignored
-    }
-
     // Clean text of markdown asterisks, hashes, brackets, and code blocks for crisp speech
     const cleanText = text
       .replace(/```[\s\S]*?```/g, 'Code block completed.')
@@ -177,7 +200,7 @@ export class VoiceService {
       .replace(/\*(.*?)\*/g, '$1')
       .replace(/\[(.*?)\]\(.*?\)/g, '$1')
       .replace(/[#_`>~]/g, '')
-      .replace(/✅|⏳|⚠️|❌|📋|📱|📊|🧮|📷|⚙️|▶️|💬|🎉|🚀|💡/g, '')
+      .replace(/✅|⏳|⚠️|❌|📋|📱|📊|🧮|📷|⚙️|▶️|💬|🎉|🚀|💡|👑|👋|📈|🏢/g, '')
       .replace(/\s+/g, ' ')
       .trim();
 
@@ -186,94 +209,132 @@ export class VoiceService {
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(cleanText);
-    utterance.rate = rate;
-    utterance.pitch = pitch;
-
-    // Refresh voices if not cached
-    if (this.cachedVoices.length === 0) {
-      try {
-        this.cachedVoices = window.speechSynthesis.getVoices();
-      } catch {
-        this.cachedVoices = [];
-      }
+    // Clear previous resume watchdog
+    if (this.resumeInterval) {
+      clearInterval(this.resumeInterval);
+      this.resumeInterval = null;
     }
-
-    const voices = this.cachedVoices;
-
-    // Select the most natural voice for the target language
-    let selectedVoice: SpeechSynthesisVoice | null = null;
-    let targetLangTag = 'hi-IN';
-
-    if (language === 'hi-IN') {
-      targetLangTag = 'hi-IN';
-      selectedVoice =
-        voices.find((v) => v.lang === 'hi-IN' || v.lang === 'hi_IN') ||
-        voices.find((v) => v.lang.startsWith('hi')) ||
-        voices.find((v) => v.name.toLowerCase().includes('hindi')) ||
-        voices.find((v) => v.lang.includes('IN')) ||
-        null;
-    } else if (language === 'hinglish') {
-      // If the text contains Devanagari, prefer Hindi voice, else Indian English voice
-      const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
-      targetLangTag = hasDevanagari ? 'hi-IN' : 'en-IN';
-      selectedVoice =
-        (hasDevanagari
-          ? voices.find((v) => v.lang === 'hi-IN' || v.lang.startsWith('hi'))
-          : null) ||
-        voices.find((v) => v.lang === 'en-IN') ||
-        voices.find((v) => v.name.toLowerCase().includes('india')) ||
-        voices.find((v) => v.lang.startsWith('en')) ||
-        null;
-    } else if (language === 'en-IN') {
-      targetLangTag = 'en-IN';
-      selectedVoice =
-        voices.find((v) => v.lang === 'en-IN') ||
-        voices.find((v) => v.name.toLowerCase().includes('india')) ||
-        voices.find((v) => v.lang.startsWith('en')) ||
-        null;
-    } else {
-      targetLangTag = 'en-US';
-      selectedVoice =
-        voices.find((v) => v.lang === 'en-US') ||
-        voices.find((v) => v.lang.startsWith('en')) ||
-        voices[0] ||
-        null;
-    }
-
-    utterance.lang = targetLangTag;
-    if (selectedVoice) {
-      utterance.voice = selectedVoice;
-    }
-
-    // Keep reference in memory so garbage collection won't silence ongoing speech in Chrome
-    this.currentUtterance = utterance;
-    (window as any)._activeUtterance = utterance;
-
-    utterance.onstart = () => {
-      if (onStart) onStart();
-    };
-
-    utterance.onend = () => {
-      this.currentUtterance = null;
-      if (onEnd) onEnd();
-    };
-
-    utterance.onerror = (e) => {
-      console.log('[VoiceService] Synthesis note:', e?.error);
-      this.currentUtterance = null;
-      if (onEnd) onEnd();
-    };
 
     try {
-      window.speechSynthesis.speak(utterance);
-    } catch (err) {
-      console.log('[VoiceService] Speak exception:', err);
-      if (onEnd) onEnd();
+      window.speechSynthesis.cancel(); // Cancel any lingering speech
+    } catch {
+      // Ignored
     }
+
+    // Short timeout avoids WebKit/Chrome bug where cancel() immediately cancels subsequent speak()
+    setTimeout(() => {
+      try {
+        if (window.speechSynthesis.paused) {
+          window.speechSynthesis.resume();
+        }
+
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = rate;
+        utterance.pitch = pitch;
+
+        // Refresh cached voices if empty
+        if (this.cachedVoices.length === 0) {
+          try {
+            this.cachedVoices = window.speechSynthesis.getVoices();
+          } catch {
+            this.cachedVoices = [];
+          }
+        }
+
+        const voices = this.cachedVoices;
+        const hasDevanagari = /[\u0900-\u097F]/.test(cleanText);
+        const isHindi = language === 'hi-IN' || hasDevanagari;
+
+        let selectedVoice: SpeechSynthesisVoice | null = null;
+        let targetLangTag = 'hi-IN';
+
+        if (isHindi) {
+          targetLangTag = 'hi-IN';
+          selectedVoice =
+            voices.find((v) => v.lang === 'hi-IN' || v.lang === 'hi_IN') ||
+            voices.find((v) => v.lang.toLowerCase().startsWith('hi')) ||
+            voices.find((v) => v.name.toLowerCase().includes('hindi')) ||
+            voices.find((v) => v.name.toLowerCase().includes('kalpana') || v.name.toLowerCase().includes('hemant') || v.name.toLowerCase().includes('lekha')) ||
+            null;
+        } else if (language === 'hinglish') {
+          targetLangTag = hasDevanagari ? 'hi-IN' : 'en-IN';
+          selectedVoice =
+            (hasDevanagari
+              ? voices.find((v) => v.lang === 'hi-IN' || v.lang.toLowerCase().startsWith('hi'))
+              : null) ||
+            voices.find((v) => v.lang === 'en-IN') ||
+            voices.find((v) => v.name.toLowerCase().includes('india')) ||
+            voices.find((v) => v.lang.toLowerCase().startsWith('en')) ||
+            null;
+        } else if (language === 'en-IN') {
+          targetLangTag = 'en-IN';
+          selectedVoice =
+            voices.find((v) => v.lang === 'en-IN') ||
+            voices.find((v) => v.name.toLowerCase().includes('india')) ||
+            voices.find((v) => v.lang.toLowerCase().startsWith('en')) ||
+            null;
+        } else {
+          targetLangTag = 'en-US';
+          selectedVoice =
+            voices.find((v) => v.lang === 'en-US') ||
+            voices.find((v) => v.lang.toLowerCase().startsWith('en')) ||
+            voices[0] ||
+            null;
+        }
+
+        utterance.lang = targetLangTag;
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+        }
+
+        // Prevent garbage collection in Chrome during speech
+        this.currentUtterance = utterance;
+        (window as any)._activeUtterance = utterance;
+
+        utterance.onstart = () => {
+          if (onStart) onStart();
+        };
+
+        const handleFinish = () => {
+          if (this.resumeInterval) {
+            clearInterval(this.resumeInterval);
+            this.resumeInterval = null;
+          }
+          this.currentUtterance = null;
+          if (onEnd) onEnd();
+        };
+
+        utterance.onend = handleFinish;
+        utterance.onerror = (e) => {
+          console.log('[VoiceService] Synthesis note:', e?.error);
+          handleFinish();
+        };
+
+        // Watchdog to prevent Chrome on Android from pausing on long text
+        this.resumeInterval = setInterval(() => {
+          if (!window.speechSynthesis.speaking) {
+            if (this.resumeInterval) {
+              clearInterval(this.resumeInterval);
+              this.resumeInterval = null;
+            }
+          } else if (window.speechSynthesis.paused) {
+            window.speechSynthesis.resume();
+          }
+        }, 3500);
+
+        window.speechSynthesis.speak(utterance);
+      } catch (err) {
+        console.log('[VoiceService] Speak exception:', err);
+        if (onEnd) onEnd();
+      }
+    }, 30);
   }
 
   public stopSpeaking() {
+    if (this.resumeInterval) {
+      clearInterval(this.resumeInterval);
+      this.resumeInterval = null;
+    }
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       try {
         window.speechSynthesis.cancel();

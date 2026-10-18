@@ -62,6 +62,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      voiceService.unlockAudio();
       setErrorMessage(null);
       setDetectedIntent(null);
       setShowTypeInput(false);
@@ -158,7 +159,7 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       return;
     }
 
-    // Automatically detect language from speech/text
+    // Automatically detect language from speech/text (Hindi Devanagari, Hinglish, English)
     const detectedLang = detectLanguage(promptText, activeLang);
     setActiveLang(detectedLang);
     if (onLanguageChange && detectedLang !== language) {
@@ -177,9 +178,11 @@ export const VoiceAssistantModal: React.FC<VoiceAssistantModalProps> = ({
       // Speak response if TTS is enabled in the detected language
       if (ttsEnabled && (result.spokenSummary || result.text)) {
         const textToSpeak = result.spokenSummary || result.text;
+        const isHindiText = /[\u0900-\u097F]/.test(textToSpeak);
+        const speechLang = isHindiText ? 'hi-IN' : detectedLang;
         voiceService.speak(
           textToSpeak,
-          detectedLang,
+          speechLang,
           1.0,
           1.0,
           () => setIsSpeaking(true),

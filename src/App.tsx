@@ -257,7 +257,7 @@ export default function App() {
         role: 'assistant',
         content: data.text || 'Command processed.',
         timestamp: Date.now(),
-        language,
+        language: effectiveLang,
         spokenSummary: data.spokenSummary,
         intentAction: data.intent,
       };
@@ -358,7 +358,7 @@ export default function App() {
         } else if (appName.includes('camera') || uri.includes('camera')) {
           const res = AndroidIntentService.openCamera();
           showToast(res.message);
-        } else if (appName.includes('setting') || uri.includes('settings')) {
+        } else if (appName.includes('setting') || uri.includes('settings') || appName.includes('सेटिंग')) {
           setIsSettingsOpen(true);
           showToast('Opened Brain Mate Settings');
         } else if (appName.includes('news')) {

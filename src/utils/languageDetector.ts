@@ -7,6 +7,7 @@ export function detectLanguage(text: string, currentFallback: SupportedLanguage 
   if (!text || !text.trim()) return currentFallback;
 
   // 1. Devanagari Unicode Block: \u0900 to \u097F
+  // If user speaks or writes in Hindi script, ALWAYS return 'hi-IN'
   if (/[\u0900-\u097F]/.test(text)) {
     return 'hi-IN';
   }
@@ -20,7 +21,8 @@ export function detectLanguage(text: string, currentFallback: SupportedLanguage 
     'kar', 'raha', 'rahi', 'rahe', 'kijiye', 'bhejo', 'shuru', 'sunao', 'khabar',
     'samachar', 'banao', 'dikhaye', 'dikhao', 'chahiye', 'karna', 'kholo', 'madad',
     'shukriya', 'dhanyavad', 'kripya', 'shubh', 'prabhat', 'sandhya', 'raatri',
-    'reliance', 'share', 'bhav', 'teji', 'mandi', 'paisa', 'kitna'
+    'reliance', 'share', 'bhav', 'teji', 'mandi', 'paisa', 'kitna', 'sabse', 'achha',
+    'pehle', 'bolo', 'bataiye', 'dekh', 'dekho', 'khol', 'gaya', 'gayi', 'hoga', 'hogi'
   ];
 
   const words = lower.split(/[^a-zA-Z0-9]+/).filter(Boolean);
@@ -30,11 +32,12 @@ export function detectLanguage(text: string, currentFallback: SupportedLanguage 
     return 'hinglish';
   }
 
-  // 3. If English words predominant
+  // 3. If predominantly English words
   const englishKeywords = [
     'what', 'how', 'status', 'complete', 'finish', 'project', 'task', 'hello', 'hi',
     'weather', 'stock', 'market', 'analysis', 'create', 'build', 'apk', 'android',
-    'open', 'settings', 'calculator', 'camera', 'note', 'reminder', 'error', 'fix'
+    'open', 'settings', 'calculator', 'camera', 'note', 'reminder', 'error', 'fix',
+    'report', 'website', 'change', 'check', 'did', 'news', 'today'
   ];
 
   const engMatch = words.filter((w) => englishKeywords.includes(w)).length;
