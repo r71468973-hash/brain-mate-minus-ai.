@@ -1,0 +1,6 @@
+{
+  "name": "Brain Mate — Your Personal AI Assistant",
+  "description": "An intelligent Android AI assistant supporting Hindi, English, and Hinglish with natural voice input, clap-to-activate detection, share market analytics, task management, and secure super-admin controls.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
