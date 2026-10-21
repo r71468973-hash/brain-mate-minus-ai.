@@ -1,73 +1,307 @@
-name: Build Android APK and AAB
 
-on:
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#101827">
+  <title>Brain Mate AI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #101827;
+      color: #f8fafc;
+    }
+    .app {
+      max-width: 650px;
+      margin: auto;
+      height: 100dvh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      padding: 18px;
+      background: #172338;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border-bottom: 1px solid #304056;
+    }
+    .logo {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      background: #2878ff;
+      border-radius: 14px;
+      font-size: 25px;
+    }
+    h1 { margin: 0; font-size: 20px; }
+    .status { color: #93a4ba; font-size: 12px; margin-top: 5px; }
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .welcome {
+      margin: auto 0;
+      text-align: center;
+      color: #a9b8cc;
+      line-height: 1.7;
+    }
+    .welcome strong { color: white; font-size: 25px; }
+    .message {
+      max-width: 88%;
+      padding: 12px 15px;
+      border-radius: 16px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      line-height: 1.55;
+    }
+    .user {
+      align-self: flex-end;
+      background: #2878ff;
+    }
+    .ai {
+      align-self: flex-start;
+      background: #202d42;
+      border: 1px solid #34435a;
+    }
+    .error { color: #ffb4b4; }
+    .composer {
+      padding: 12px;
+      padding-bottom: max(12px, env(safe-area-inset-bottom));
+      background: #172338;
+      border-top: 1px solid #304056;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    input {
+      flex: 1;
+      min-width: 0;
+      background: #101827;
+      color: white;
+      border: 1px solid #43516a;
+      border-radius: 14px;
+      padding: 14px;
+      font-size: 16px;
+      outline: none;
+    }
+    button {
+      border: 0;
+      border-radius: 13px;
+      padding: 13px;
+      background: #2878ff;
+      color: white;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:disabled { opacity: .5; }
+    #mic { background: #33435a; }
+    .bottom {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 10px;
+      color: #9aabc1;
+      font-size: 12px;
+    }
+    #settings { background: transparent; padding: 5px; }
+    select {
+      background: #202d42;
+      color: white;
+      border: 1px solid #43516a;
+      border-radius: 8px;
+      padding: 6px;
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <div class="logo">🧠</div>
+    <div>
+      <h1>Brain Mate AI</h1>
+      <div class="status" id="status">आपका AI Assistant</div>
+    </div>
+  </header>
 
-jobs:
-  build:
-    name: Build Android Release APK & AAB
-    runs-on: ubuntu-latest
+  <main id="chat" aria-live="polite">
+    <div class="welcome" id="welcome">
+      <strong>नमस्ते, Boss! 👋</strong><br>
+      मैं Brain Mate हूँ।<br>
+      आज मैं आपकी क्या मदद करूँ?
+    </div>
+  </main>
 
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
+  <section class="composer">
+    <div class="controls">
+      <button id="mic" title="बोलकर लिखें" aria-label="Microphone">🎙️</button>
+      <input id="input" placeholder="अपना सवाल लिखें..." autocomplete="off">
+      <button id="send">Send ➤</button>
+    </div>
+    <div class="bottom">
+      <span id="hint">अपनी भाषा में सवाल पूछें</span>
+      <button id="settings">⚙️ Settings</button>
+    </div>
+    <div id="settingsPanel" hidden style="padding-top:12px">
+      <label for="apiUrl">AI Backend URL:</label>
+      <input id="apiUrl" placeholder="https://your-backend.example/chat"
+        style="width:100%;margin-top:8px">
+      <p style="font-size:12px;color:#9aabc1">
+        अपना असली backend URL डालें। API key यहाँ न डालें।
+      </p>
+      <button id="saveSettings">Save URL</button>
+    </div>
+  </section>
+</div>
 
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
+<script>
+  const $ = id => document.getElementById(id);
+  const chat = $("chat");
+  const input = $("input");
+  const send = $("send");
+  const status = $("status");
+  let busy = false;
+  let apiUrl = "";
 
-      - name: Setup Java JDK 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
+  function addMessage(text, type) {
+    $("welcome")?.remove();
+    const el = document.createElement("div");
+    el.className = "message " + type;
+    el.textContent = text;
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+    return el;
+  }
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+  async function askAI(message) {
+    if (!apiUrl) {
+      throw new Error(
+        "AI backend अभी सेट नहीं है। Settings में अपने backend का URL डालें।"
+      );
+    }
 
-      - name: Install NPM Dependencies
-        run: npm ci || npm install
+    // Your backend must accept POST { message } and return
+    // JSON such as { "reply": "AI response" }.
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message })
+    });
 
-      - name: Build Web Application
-        run: npm run build
+    if (!response.ok) {
+      throw new Error("AI सेवा में समस्या है (HTTP " + response.status + ")।");
+    }
 
-      - name: Install Capacitor Android Tools
-        run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap add android || true
-          npx cap sync android
+    const data = await response.json();
+    const reply = data.reply ?? data.response ?? data.message;
 
-      - name: Build Release APK with Gradle
-        working-directory: ./android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease
+    if (typeof reply !== "string" || !reply.trim()) {
+      throw new Error("Backend से सही जवाब नहीं मिला।");
+    }
+    return reply;
+  }
 
-      - name: Build Android App Bundle (AAB) for Play Store
-        working-directory: ./android
-        run: |
-          ./gradlew bundleRelease
+  async function sendMessage() {
+    const message = input.value.trim();
+    if (!message || busy) return;
 
-      - name: Sign Release APK (Debug keystore fallback for testing)
-        run: |
-          $ANDROID_HOME/build-tools/34.0.0/zipalign -v 4 android/app/build/outputs/apk/release/app-release-unsigned.apk brain-mate-aligned.apk || cp android/app/build/outputs/apk/release/app-release-unsigned.apk brain-mate-aligned.apk
-          keytool -genkey -v -keystore release.keystore -alias brainmate -keyalg RSA -keysize 2048 -validity 10000 -storepass brainmate123 -keypass brainmate123 -dname "CN=BrainMate, OU=AI, O=BrainMate, L=Mumbai, S=MH, C=IN"
-          $ANDROID_HOME/build-tools/34.0.0/apksigner sign --ks release.keystore --ks-pass pass:brainmate123 --key-pass pass:brainmate123 --out brain-mate-release.apk brain-mate-aligned.apk
+    input.value = "";
+    addMessage(message, "user");
+    const answerEl = addMessage("जवाब तैयार हो रहा है…", "ai");
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Brain-Mate-Release-APK
-          path: brain-mate-release.apk
-          retention-days: 30
+    busy = true;
+    send.disabled = true;
+    status.textContent = "जवाब तैयार हो रहा है…";
 
-      - name: Upload AAB Bundle Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Brain-Mate-Google-Play-AAB
-          path: android/app/build/outputs/bundle/release/app-release.aab
-          retention-days: 30
+    try {
+      const reply = await askAI(message);
+      answerEl.textContent = reply;
+      status.textContent = "Assistant तैयार है";
+    } catch (err) {
+      answerEl.classList.add("error");
+      answerEl.textContent = "जवाब नहीं मिला: " +
+        (err.message || "कनेक्शन जाँचें।");
+      status.textContent = "कनेक्शन जाँचें";
+    } finally {
+      busy = false;
+      send.disabled = false;
+      input.focus();
+      chat.scrollTop = chat.scrollHeight;
+    }
+  }
+
+  send.addEventListener("click", sendMessage);
+  input.addEventListener("keydown", event => {
+    if (event.key === "Enter") sendMessage();
+  });
+
+  $("settings").addEventListener("click", () => {
+    $("settingsPanel").hidden = !$("settingsPanel").hidden;
+  });
+
+  $("saveSettings").addEventListener("click", () => {
+    const value = $("apiUrl").value.trim();
+    try {
+      const url = new URL(value);
+      if (!["https:", "http:"].includes(url.protocol)) throw new Error();
+      apiUrl = url.href;
+      status.textContent = "Backend URL सेट हो गया";
+      $("settingsPanel").hidden = true;
+    } catch {
+      status.textContent = "सही Backend URL डालें";
+    }
+  });
+
+  const SpeechRecognition =
+    window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  $("mic").addEventListener("click", () => {
+    if (!SpeechRecognition) {
+      status.textContent = "इस ब्राउज़र में Speech Recognition उपलब्ध नहीं है";
+      return;
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = "hi-IN";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      status.textContent = "सुन रहा हूँ, Boss…";
+      $("mic").disabled = true;
+    };
+
+    recognition.onresult = event => {
+      input.value = event.results[0][0].transcript;
+      input.focus();
+      status.textContent = "आपका सवाल तैयार है";
+    };
+
+    recognition.onerror = event => {
+      status.textContent = "Voice error: " + event.error;
+    };
+
+    recognition.onend = () => {
+      $("mic").disabled = false;
+    };
+
+    try {
+      recognition.start();
+    } catch {
+      status.textContent = "माइक्रोफोन दोबारा चालू करें";
+      $("mic").disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
