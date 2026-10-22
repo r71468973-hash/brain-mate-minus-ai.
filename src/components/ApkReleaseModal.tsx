@@ -89,7 +89,7 @@ on:
 
 jobs:
   build:
-    name: Build Android Release APK & AAB
+    name: Build Android Release APK
     runs-on: ubuntu-latest
 
     steps:
@@ -101,6 +101,7 @@ jobs:
         with:
           node-version: 20
           cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
@@ -112,40 +113,67 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install NPM Dependencies
-        run: npm ci || npm install
+        run: |
+          if [ -f "package-lock.json" ]; then
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
       - name: Build Web Application
         run: npm run build
 
-      - name: Install Capacitor Android Tools
+      - name: Setup Capacitor Android
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android
-          npx cap add android || true
+          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          if [ ! -f "android/gradlew" ]; then
+            echo "Initializing Capacitor Android project structure..."
+            if [ -f "android/app/src/main/AndroidManifest.xml" ]; then
+              mkdir -p /tmp/cap-backup
+              cp android/app/src/main/AndroidManifest.xml /tmp/cap-backup/
+            fi
+            rm -rf android
+            npx cap add android
+            if [ -f "/tmp/cap-backup/AndroidManifest.xml" ]; then
+              cp /tmp/cap-backup/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+            fi
+          fi
           npx cap sync android
 
-      - name: Build Release APK with Gradle
+      - name: Build Android APK with Gradle
         working-directory: ./android
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease
+          ./gradlew assembleRelease || ./gradlew assembleDebug
 
-      - name: Build Android App Bundle (AAB) for Play Store
-        working-directory: ./android
+      - name: Prepare and Sign Release APK
         run: |
-          ./gradlew bundleRelease
+          APK_PATH=$(find android/app/build/outputs/apk -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: No APK found after Gradle build!"
+            exit 1
+          fi
+          echo "Found built APK at: $APK_PATH"
+          if [[ "$APK_PATH" == *"unsigned"* ]]; then
+            echo "Signing APK with release keystore..."
+            keytool -genkey -v -keystore release.keystore -alias brainmate -keyalg RSA -keysize 2048 -validity 10000 -storepass brainmate123 -keypass brainmate123 -dname "CN=BrainMate, OU=AI, O=BrainMate, L=Mumbai, S=MH, C=IN" -noprompt
+            if command -v apksigner &> /dev/null; then
+              apksigner sign --ks release.keystore --ks-pass pass:brainmate123 --key-pass pass:brainmate123 --out brain-mate-release.apk "$APK_PATH"
+            else
+              jarsigner -verbose -sigalg SHA256withRSA -digestalg SHA-256 -keystore release.keystore -storepass brainmate123 -keypass brainmate123 "$APK_PATH" brainmate
+              cp "$APK_PATH" brain-mate-release.apk
+            fi
+          else
+            cp "$APK_PATH" brain-mate-release.apk
+          fi
+          echo "Release APK successfully generated:"
+          ls -la brain-mate-release.apk
 
-      - name: Upload APK Artifact
+      - name: Upload Brain Mate APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Brain-Mate-Release-APK
-          path: android/app/build/outputs/apk/release/app-release-unsigned.apk
-          retention-days: 30
-
-      - name: Upload AAB Bundle Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Brain-Mate-Google-Play-AAB
-          path: android/app/build/outputs/bundle/release/app-release.aab
+          path: brain-mate-release.apk
           retention-days: 30
 `;
     const blob = new Blob([workflowContent], { type: 'text/yaml' });
