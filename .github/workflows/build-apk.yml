@@ -1,3 +1,4 @@
+
 name: Build Brain Mate Android APK
 
 on:
@@ -5,75 +6,77 @@ on:
     branches: [main, master]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Brain Mate APK
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout Source Code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js 20
+      - name: Verify HTML
+        run: |
+          if [ ! -f index.html ]; then
+            echo "ERROR: index.html not found in repository root"
+            exit 1
+          fi
+
+      - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: 'package-lock.json'
+          node-version: 20
 
-      - name: Setup Java JDK 17
+      - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '21'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Dependencies
-        run: npm ci --legacy-peer-deps
-
-      - name: Build Web Application
-        run: npm run build
-
-      - name: Setup Capacitor Android
+      - name: Create Android Web App
         run: |
-          npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          if [ ! -f android/gradlew ]; then
-            npx cap add android
-          fi
-          npx cap sync android
+          mkdir -p www
+          cp index.html www/index.html
+          npm init -y
+          npm install @capacitor/core @capacitor/android @capacitor/cli
 
-      - name: Build Android APK
-        working-directory: android
+      - name: Configure Capacitor
         run: |
+          cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.brainmate.ai",
+            "appName": "Brain Mate",
+            "webDir": "www",
+            "server": {
+              "androidScheme": "https"
+            }
+          }
+          EOF
+
+      - name: Add Android
+        run: npx cap add android
+
+      - name: Sync Android
+        run: npx cap sync android
+
+      - name: Build APK
+        run: |
+          cd android
           chmod +x gradlew
-          ./gradlew assembleDebug || ./gradlew assembleRelease --stacktrace
-
-      - name: Prepare APK
-        run: |
-          mkdir -p output
-          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
-            cp "android/app/build/outputs/apk/release/app-release-unsigned.apk" output/Brain-Mate.apk
-          elif [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
-            cp "android/app/build/outputs/apk/debug/app-debug.apk" output/Brain-Mate.apk
-          else
-            echo "Searching for generated APK files..."
-            find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} output/Brain-Mate.apk \;
-          fi
-          if [ ! -f "output/Brain-Mate.apk" ]; then
-            echo "ERROR: APK file could not be prepared"
-            exit 1
-          fi
+          ./gradlew assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: Brain-Mate-APK
-          path: output/Brain-Mate.apk
-          retention-days: 30
-
-
-
-
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
           
