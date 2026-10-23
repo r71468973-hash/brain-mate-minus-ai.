@@ -53,12 +53,82 @@ export interface ActionIntent {
     | 'call_contact'
     | 'send_whatsapp'
     | 'set_reminder'
-    | 'search_web';
+    | 'search_web'
+    | 'create_video'
+    | 'edit_video'
+    | 'upload_youtube'
+    | 'automate_browser';
   title: string;
   description: string;
   requiresConfirmation: boolean;
   executed?: boolean;
   payload: Record<string, any>;
+}
+
+export type VideoAspectRatio = '16:9' | '9:16';
+
+export interface VideoScene {
+  id: string;
+  title: string;
+  subtitle: string;
+  narration: string;
+  visualPrompt: string;
+  bgGradient: [string, string];
+  iconName?: string;
+  durationSec: number;
+  transition: 'fade' | 'slide' | 'zoom';
+}
+
+export interface VideoProject {
+  id: string;
+  title: string;
+  description: string;
+  tags: string[];
+  aspectRatio: VideoAspectRatio;
+  status: 'draft' | 'generating' | 'ready' | 'uploading' | 'published' | 'error';
+  progress: number;
+  currentStepMessage?: string;
+  scenes: VideoScene[];
+  bgmStyle: 'tech_ambient' | 'energetic' | 'lofi' | 'cinematic' | 'none';
+  videoBlobUrl?: string;
+  videoDurationSec?: number;
+  trimStartSec?: number;
+  trimEndSec?: number;
+  youtubeUrl?: string;
+  youtubeVideoId?: string;
+  youtubePrivacy?: 'private' | 'unlisted' | 'public';
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface YouTubeChannelProfile {
+  id: string;
+  title: string;
+  customUrl?: string;
+  avatarUrl?: string;
+  subscriberCount?: string;
+  videoCount?: string;
+}
+
+export interface YouTubeUploadConfig {
+  title: string;
+  description: string;
+  tags: string[];
+  privacy: 'private' | 'unlisted' | 'public';
+  madeForKids: boolean;
+}
+
+export interface BrowserAutomationItem {
+  id: string;
+  command: string;
+  actionType: 'navigate' | 'search' | 'open_app' | 'inspect' | 'purchase' | 'delete';
+  targetUrl?: string;
+  status: 'executing' | 'completed' | 'blocked' | 'requires_confirmation';
+  requiresConfirmation: boolean;
+  confirmationPrompt?: string;
+  resultMessage: string;
+  timestamp: number;
+  extractedData?: any;
 }
 
 export interface StockChartPoint {

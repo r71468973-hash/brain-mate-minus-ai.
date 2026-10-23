@@ -15,6 +15,8 @@ import {
   Sliders,
   ChevronRight,
   Zap,
+  Video,
+  Globe,
 } from 'lucide-react';
 import { ExecutableTask, MarketStock, UserNote, UserTask } from '../types';
 import { AndroidIntentService } from '../services/androidIntents';
@@ -23,6 +25,7 @@ interface HomeViewProps {
   onStartVoice: (initialPrompt?: string) => void;
   onOpenMarketStock: (stock: MarketStock) => void;
   onOpenTab: (tab: string) => void;
+  onOpenBrowserAutomation?: () => void;
   stocks: MarketStock[];
   tasks: UserTask[];
   notes: UserNote[];
@@ -41,6 +44,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onStartVoice,
   onOpenMarketStock,
   onOpenTab,
+  onOpenBrowserAutomation,
   stocks,
   tasks,
   notes,
@@ -56,9 +60,10 @@ export const HomeView: React.FC<HomeViewProps> = ({
 }) => {
   const quickPrompts = [
     { label: 'Mera Kaam Hua Kya?', text: 'Boss, mera kaam hua kya?', icon: Sparkles, highlight: true },
+    { label: '🎬 Video Creator', text: 'Boss, create a video about technology for YouTube Shorts', icon: Video, action: () => onOpenTab('studio') },
+    { label: '🌐 Browser Automator', text: 'Brain Mate, open Google and search tech news', icon: Globe, action: () => onOpenBrowserAutomation?.() },
     { label: 'Reliance Share Analysis', text: 'Brain Mate, Reliance share ka analysis karo', icon: TrendingUp },
     { label: 'Is Project Complete?', text: 'Is my project complete?', icon: CheckCircle2 },
-    { label: 'Nifty 50 Status', text: 'Nifty 50 ka live trend aur analysis batao', icon: Zap },
   ];
 
   const pendingTasks = tasks.filter((t) => !t.isCompleted);
@@ -114,7 +119,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
               <button
                 key={idx}
                 onClick={() => {
-                  if (item.highlight && onAskTaskStatus) {
+                  if ((item as any).action) {
+                    (item as any).action();
+                  } else if (item.highlight && onAskTaskStatus) {
                     onAskTaskStatus(item.text);
                   } else {
                     onStartVoice(item.text);

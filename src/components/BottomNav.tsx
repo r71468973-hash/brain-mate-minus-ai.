@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, MessageSquare, TrendingUp, Mic, CheckSquare, Settings } from 'lucide-react';
+import { Home, MessageSquare, TrendingUp, Mic, CheckSquare, Settings, Video } from 'lucide-react';
 
 interface BottomNavProps {
   activeTab: string;
@@ -63,10 +63,27 @@ export const BottomNav: React.FC<BottomNavProps> = ({
           </span>
         </div>
 
+        {/* AI Video Studio */}
+        <button
+          onClick={() => onTabChange('studio')}
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl transition-all ${
+            activeTab === 'studio'
+              ? 'text-rose-400 font-semibold'
+              : 'text-slate-400 hover:text-slate-200'
+          }`}
+          title="AI Video Studio & YouTube Creator"
+        >
+          <div className="relative">
+            <Video className={`w-5 h-5 transition-transform ${activeTab === 'studio' ? 'scale-110' : ''}`} />
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+          </div>
+          <span className="text-[10px] mt-1">Video AI</span>
+        </button>
+
         {/* Share Market */}
         <button
           onClick={() => onTabChange('markets')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl transition-all ${
             activeTab === 'markets'
               ? 'text-cyan-400 font-semibold'
               : 'text-slate-400 hover:text-slate-200'
@@ -79,7 +96,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         {/* Tasks & Notes */}
         <button
           onClick={() => onTabChange('tasks')}
-          className={`flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all ${
+          className={`flex flex-col items-center justify-center py-1 px-1.5 rounded-xl transition-all ${
             activeTab === 'tasks'
               ? 'text-indigo-400 font-semibold'
               : 'text-slate-400 hover:text-slate-200'
@@ -87,16 +104,6 @@ export const BottomNav: React.FC<BottomNavProps> = ({
         >
           <CheckSquare className={`w-5 h-5 transition-transform ${activeTab === 'tasks' ? 'scale-110' : ''}`} />
           <span className="text-[10px] mt-1">Tasks</span>
-        </button>
-
-        {/* Restored Settings Option */}
-        <button
-          onClick={onOpenSettings}
-          className="flex flex-col items-center justify-center py-1 px-2 rounded-xl transition-all text-slate-400 hover:text-slate-200"
-          title="Brain Mate Settings"
-        >
-          <Settings className="w-5 h-5 transition-transform hover:rotate-45" />
-          <span className="text-[10px] mt-1">Settings</span>
         </button>
       </div>
     </nav>

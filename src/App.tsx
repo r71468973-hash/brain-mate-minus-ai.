@@ -12,6 +12,8 @@ import { ClapSettingsModal } from './components/ClapSettingsModal';
 import { IntentConfirmationModal } from './components/IntentConfirmationModal';
 import { ApkReleaseModal } from './components/ApkReleaseModal';
 import { SettingsModal } from './components/SettingsModal';
+import { VideoStudioView } from './components/VideoStudioView';
+import { BrowserAutomationModal } from './components/BrowserAutomationModal';
 import { detectLanguage } from './utils/languageDetector';
 
 import {
@@ -32,7 +34,10 @@ import { voiceService } from './services/voiceService';
 
 export default function App() {
   // Navigation & View state
-  const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'markets' | 'tasks' | 'admin'>('home');
+  const [activeTab, setActiveTab] = useState<'home' | 'chat' | 'markets' | 'tasks' | 'admin' | 'studio'>('home');
+  const [videoInitialPrompt, setVideoInitialPrompt] = useState<string | undefined>(undefined);
+  const [isBrowserModalOpen, setIsBrowserModalOpen] = useState(false);
+  const [browserInitialCommand, setBrowserInitialCommand] = useState<string | undefined>(undefined);
 
   // Assistant Configuration
   const [language, setLanguage] = useState<SupportedLanguage>('hinglish');
@@ -436,6 +441,29 @@ export default function App() {
         break;
       }
 
+      case 'create_video':
+      case 'edit_video': {
+        const prompt = intent.payload?.prompt || intent.payload?.title || intent.payload?.topic || '';
+        setVideoInitialPrompt(prompt);
+        setActiveTab('studio');
+        showToast(`Boss, opening Video AI Studio: "${prompt || 'New Video'}"`);
+        break;
+      }
+
+      case 'upload_youtube': {
+        setActiveTab('studio');
+        showToast('Boss, opened Video Studio YouTube publisher.');
+        break;
+      }
+
+      case 'automate_browser': {
+        const command = intent.payload?.command || intent.payload?.url || intent.payload?.action || '';
+        setBrowserInitialCommand(command);
+        setIsBrowserModalOpen(true);
+        showToast('Boss, launching Browser Automation module...');
+        break;
+      }
+
       default:
         showToast('Action executed successfully.');
     }
@@ -591,6 +619,7 @@ export default function App() {
             onUpdateClapSensitivity={handleUpdateClapSensitivity}
             onToggleClap={handleToggleClap}
             onOpenClapModal={() => setIsClapModalOpen(true)}
+            onOpenBrowserAutomation={() => setIsBrowserModalOpen(true)}
           />
         )}
 
@@ -631,6 +660,15 @@ export default function App() {
             onUpdateExecutableTaskStatus={handleUpdateExecutableTaskStatus}
             onAskTaskStatus={handleAskTaskStatus}
             language={language}
+          />
+        )}
+
+        {activeTab === 'studio' && (
+          <VideoStudioView
+            language={language}
+            onOpenVoice={handleStartVoice}
+            initialPrompt={videoInitialPrompt}
+            onShowToast={showToast}
           />
         )}
 
@@ -723,6 +761,14 @@ export default function App() {
         deferredPrompt={deferredPrompt}
         onInstallPwa={handleInstallPwa}
         isPwaInstalled={isPwaInstalled}
+      />
+
+      {/* Browser & Web Automation Engine Modal */}
+      <BrowserAutomationModal
+        isOpen={isBrowserModalOpen}
+        onClose={() => setIsBrowserModalOpen(false)}
+        initialCommand={browserInitialCommand}
+        onShowToast={showToast}
       />
 
       {/* Floating Toast Notification */}

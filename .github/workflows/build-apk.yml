@@ -19,6 +19,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: 'package-lock.json'
 
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
@@ -30,12 +32,7 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install Dependencies
-        run: |
-          if [ -f package-lock.json ]; then
-            npm ci --legacy-peer-deps
-          else
-            npm install --legacy-peer-deps
-          fi
+        run: npm ci --legacy-peer-deps
 
       - name: Build Web Application
         run: npm run build
@@ -52,17 +49,23 @@ jobs:
         working-directory: android
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleDebug || ./gradlew assembleRelease --stacktrace
 
       - name: Prepare APK
         run: |
-          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK_PATH" ]; then
-            echo "ERROR: APK file not found"
+          mkdir -p output
+          if [ -f "android/app/build/outputs/apk/release/app-release-unsigned.apk" ]; then
+            cp "android/app/build/outputs/apk/release/app-release-unsigned.apk" output/Brain-Mate.apk
+          elif [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            cp "android/app/build/outputs/apk/debug/app-debug.apk" output/Brain-Mate.apk
+          else
+            echo "Searching for generated APK files..."
+            find android/app/build/outputs/apk/ -name "*.apk" -exec cp {} output/Brain-Mate.apk \;
+          fi
+          if [ ! -f "output/Brain-Mate.apk" ]; then
+            echo "ERROR: APK file could not be prepared"
             exit 1
           fi
-          mkdir -p output
-          cp "$APK_PATH" output/Brain-Mate.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
