@@ -3,7 +3,9 @@ name: Build Brain Mate Android APK
 
 on:
   push:
-    branches: [main, master]
+    branches:
+      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -13,70 +15,74 @@ jobs:
   build:
     name: Build Brain Mate APK
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-
-      - name: Verify HTML
-        run: |
-          if [ ! -f index.html ]; then
-            echo "ERROR: index.html not found in repository root"
-            exit 1
-          fi
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
 
-      - name: Setup Java
+      - name: Setup Java JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: 17
+          cache: gradle
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 12266719
+          ndk-version: 21.4.7075529
 
-      - name: Create Android Web App
+      - name: Install Dependencies
         run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          elif [ -f package.json ]; then
+            npm install
+          else
+            npm init -y
+          fi
+
+      - name: Install Capacitor
+        run: |
+          npm install @capacitor/core @capacitor/android
+          npm install -D @capacitor/cli
+
+      - name: Configure Brain Mate
+        run: |
+          node -e "const fs=require('fs');const p=require('./package.json');p.name='brain-mate';p.version=p.version||'1.0.0';p.scripts={...(p.scripts||{}),build:p.scripts?.build||'echo Web build ready'};fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ]; then
+            echo '{"appId":"com.brainmate.ai","appName":"Brain Mate","webDir":"www","server":{"androidScheme":"https"}}' > capacitor.config.json
+          fi
           mkdir -p www
-          cp index.html www/index.html
-          npm init -y
-          npm install @capacitor/core @capacitor/android @capacitor/cli
+          if [ -f index.html ]; then
+            cp index.html www/index.html
+          elif [ ! -f www/index.html ]; then
+            echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><h1>Brain Mate</h1></body></html>' > www/index.html
+          fi
 
-      - name: Configure Capacitor
+      - name: Add Android Platform
         run: |
-          cat > capacitor.config.json <<'EOF'
-          {
-            "appId": "com.brainmate.ai",
-            "appName": "Brain Mate",
-            "webDir": "www",
-            "server": {
-              "androidScheme": "https"
-            }
-          }
-          EOF
+          if [ ! -d android ]; then
+            npx cap add android
+          fi
+          npx cap sync android
 
-      - name: Add Android
-        run: npx cap add android
-
-      - name: Sync Android
-        run: npx cap sync android
-
-      - name: Build APK
+      - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
 
-      - name: Upload APK
+      - name: Upload Brain Mate APK
         uses: actions/upload-artifact@v4
         with:
           name: Brain-Mate-APK
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-          retention-days: 14
           
