@@ -1,90 +1,105 @@
-l
 name: Build Brain Mate Android APK
 
 on:
   push:
-    branches:
-      - main
-      - master
+    branches: [main, master]
   workflow_dispatch:
-
-permissions:
-  contents: read
 
 jobs:
   build:
-    name: Build Brain Mate APK
+    name: Build Brain Mate Android APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: '20'
 
-      - name: Setup Java JDK
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
-          cache: gradle
+          java-version: '17'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          cmdline-tools-version: 12266719
-          ndk-version: 21.4.7075529
 
       - name: Install Dependencies
         run: |
-          if [ -f package-lock.json ]; then
-            npm ci
-          elif [ -f package.json ]; then
-            npm install
-          else
+          if [ ! -f package.json ]; then
+            echo "package.json not found. Initializing package..."
             npm init -y
+            npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          elif [ -f package-lock.json ]; then
+            echo "Installing dependencies via npm ci..."
+            npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+          else
+            echo "Installing dependencies via npm install..."
+            npm install --legacy-peer-deps
           fi
 
-      - name: Install Capacitor
+      - name: Build Web Application
         run: |
-          npm install @capacitor/core @capacitor/android
-          npm install -D @capacitor/cli
+          if [ -f package.json ] && grep -q '"build"' package.json; then
+            echo "Building via npm run build..."
+            npm run build
+          else
+            echo "Building static distribution directory..."
+            mkdir -p dist
+            cp -r index.html dist/ 2>/dev/null || true
+            if [ -d public ]; then cp -r public/* dist/ 2>/dev/null || true; fi
+            if [ -d src ]; then cp -r src dist/ 2>/dev/null || true; fi
+          fi
 
-      - name: Configure Brain Mate
+      - name: Setup & Sync Capacitor Android
         run: |
-          node -e "const fs=require('fs');const p=require('./package.json');p.name='brain-mate';p.version=p.version||'1.0.0';p.scripts={...(p.scripts||{}),build:p.scripts?.build||'echo Web build ready'};fs.writeFileSync('package.json',JSON.stringify(p,null,2))"
+          # Ensure Capacitor CLI and Android platform exist
+          if ! npx cap --version >/dev/null 2>&1; then
+            npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          fi
+
           if [ ! -f capacitor.config.json ] && [ ! -f capacitor.config.ts ]; then
-            echo '{"appId":"com.brainmate.ai","appName":"Brain Mate","webDir":"www","server":{"androidScheme":"https"}}' > capacitor.config.json
-          fi
-          mkdir -p www
-          if [ -f index.html ]; then
-            cp index.html www/index.html
-          elif [ ! -f www/index.html ]; then
-            echo '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><h1>Brain Mate</h1></body></html>' > www/index.html
+            npx cap init "Brain Mate" "com.brainmate.ai" --web-dir dist
           fi
 
-      - name: Add Android Platform
-        run: |
-          if [ ! -d android ]; then
+          if [ ! -d android ] || [ ! -f android/gradlew ]; then
+            echo "Adding Android platform..."
             npx cap add android
           fi
+
+          echo "Syncing web assets to native Android project..."
           npx cap sync android
 
-      - name: Build Debug APK
+      - name: Build Android Debug APK
+        working-directory: android
         run: |
-          cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug --stacktrace
 
-      - name: Upload Brain Mate APK
+      - name: Prepare APK Artifact
+        run: |
+          mkdir -p output
+          APK_FILE=$(find android/app/build/outputs/apk/debug/ -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            APK_FILE=$(find android/app/build/outputs/apk/ -name "*.apk" -type f | head -n 1)
+          fi
+
+          if [ -n "$APK_FILE" ] && [ -f "$APK_FILE" ]; then
+            echo "Found APK: $APK_FILE"
+            cp "$APK_FILE" output/Brain-Mate.apk
+            echo "Successfully prepared output/Brain-Mate.apk ($(du -h output/Brain-Mate.apk | cut -f1))"
+          else
+            echo "ERROR: No Android APK file was generated by the Gradle build step."
+            exit 1
+          fi
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Brain-Mate-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
-
-          
+          path: output/Brain-Mate.apk
+          retention-days: 30
