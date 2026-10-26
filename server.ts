@@ -26,7 +26,8 @@ function getOpenAiClient(): OpenAI | null {
   if (!apiKey) return null;
   return new OpenAI({ apiKey });
 }
-const defaultOpenAiModel = process.env.OPENAI_MODEL?.trim() || 'gpt-4o';
+const rawModel = process.env.OPENAI_MODEL?.trim();
+const defaultOpenAiModel = (rawModel && !rawModel.startsWith('sk-')) ? rawModel : 'gpt-4o';
 
 // Helper to get fresh GoogleGenAI instance with current GEMINI_API_KEY
 function getAiClient(): GoogleGenAI | null {
