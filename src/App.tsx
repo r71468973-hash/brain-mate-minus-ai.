@@ -31,6 +31,7 @@ import { StorageService } from './services/storage';
 import { clapDetector } from './services/clapDetector';
 import { AndroidIntentService } from './services/androidIntents';
 import { voiceService } from './services/voiceService';
+import { adminService } from './services/adminService';
 
 export default function App() {
   // Navigation & View state
@@ -104,6 +105,15 @@ export default function App() {
         }
       }
     }
+  }, []);
+
+  // Check active admin session on boot
+  useEffect(() => {
+    adminService.verifySession().then((isValid) => {
+      if (isValid) {
+        setIsAdmin(true);
+      }
+    });
   }, []);
 
   // 1. Fetch live/delayed stock market quotes on boot
@@ -557,9 +567,10 @@ export default function App() {
     return false;
   };
 
-  const handleLogoutAdmin = () => {
+  const handleLogoutAdmin = async () => {
+    await adminService.logout();
     setIsAdmin(false);
-    showToast('Exited Admin Mode.');
+    showToast('Exited Admin Mode. Session locked.');
   };
 
   // PWA Install Trigger

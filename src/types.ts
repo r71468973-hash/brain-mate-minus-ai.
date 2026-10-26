@@ -230,18 +230,65 @@ export interface AuditLogEntry {
   adminEmail: string;
   action: string;
   details: string;
+  severity?: 'info' | 'warning' | 'critical';
   ip?: string;
 }
 
+export interface RegisteredUser {
+  id: string;
+  email: string;
+  displayName: string;
+  role: 'owner' | 'admin' | 'user';
+  status: 'active' | 'suspended';
+  apiCallsCount: number;
+  createdAt: string;
+  lastLoginAt: string;
+  suspendReason?: string;
+}
+
+export interface SupportTicket {
+  id: string;
+  userId: string;
+  userEmail: string;
+  subject: string;
+  message: string;
+  status: 'open' | 'in_progress' | 'resolved';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  createdAt: number;
+  adminReply?: string;
+  resolvedAt?: number;
+}
+
+export interface AiErrorLog {
+  id: string;
+  timestamp: number;
+  endpoint: string;
+  error: string;
+  statusCode: number;
+  callerIp?: string;
+}
+
+export interface MaintenanceState {
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
+  updatedBy: string;
+  updatedAt: string;
+}
+
 export interface AdminStats {
+  superAdminEmail: string;
   totalAiQueries: number;
   totalTokensUsed: number;
   estimatedCostUSD: number;
   serverUptimeSeconds: number;
   activeUsersCount: number;
+  registeredUsersCount: number;
+  suspendedUsersCount: number;
   modelInUse: string;
   hasApiKey: boolean;
   serverTimestamp: string;
+  maintenanceMode: boolean;
+  maintenanceMessage: string;
   featureFlags: {
     voiceAssistant: boolean;
     clapDetection: boolean;
@@ -249,7 +296,10 @@ export interface AdminStats {
     geminiLive: boolean;
     adminPanel: boolean;
     pwaDownload: boolean;
+    bossMode: boolean;
   };
   systemAnnouncement: string;
   auditLogs: AuditLogEntry[];
+  recentErrors?: AiErrorLog[];
 }
+

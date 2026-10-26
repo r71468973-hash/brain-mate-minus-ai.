@@ -1,0 +1,78 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny-all posture
+    match /{document=**} {
+      allow read, write: false;
+    }
+
+    // Helper functions for Zero-Trust authorization
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner() {
+      return isAuthenticated() && request.auth.token.email == 'r71468973@gmail.com';
+    }
+
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isUserActive(userId) {
+      return !exists(/databases/$(database)/documents/users/$(userId)) || 
+             get(/databases/$(database)/documents/users/$(userId)).data.status == 'active';
+    }
+
+    // 1. User Profiles & Account Control
+    match /users/{userId} {
+      allow read: if isUser(userId) || isOwner();
+      
+      // Prevent privilege escalation on create: only owner can obtain owner role
+      allow create: if isUser(userId) && 
+                    request.resource.data.id == userId &&
+                    (request.resource.data.role == 'user' || (request.resource.data.role == 'owner' && isOwner())) &&
+                    request.resource.data.status == 'active';
+
+      // Updates: Ordinary users cannot elevate their role or clear suspension
+      allow update: if isOwner() || 
+                    (isUser(userId) && 
+                     isUserActive(userId) &&
+                     request.resource.data.role == resource.data.role &&
+                     request.resource.data.status == resource.data.status);
+
+      allow delete: if isOwner() || isUser(userId);
+
+      // 2. User Subcollections (Notes & Tasks)
+      match /notes/{noteId} {
+        allow read, write: if (isUser(userId) || isOwner()) && isUserActive(userId);
+      }
+
+      match /tasks/{taskId} {
+        allow read, write: if (isUser(userId) || isOwner()) && isUserActive(userId);
+      }
+    }
+
+    // 3. Security Audit Logs: Immutable and accessible strictly by project owner
+    match /audit_logs/{logId} {
+      allow read: if isOwner();
+      allow create: if isOwner();
+      allow update, delete: false; // Immutable audit trail
+    }
+
+    // 4. Global App Configurations & Maintenance Controls
+    match /app_configs/{configId} {
+      allow read: if true; // Public read so app can check maintenance status & announcements
+      allow write: if isOwner();
+    }
+
+    // 5. Support & Feedback Tickets
+    match /support_tickets/{ticketId} {
+      allow read: if isOwner() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if isOwner() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow delete: if isOwner();
+    }
+  }
+}

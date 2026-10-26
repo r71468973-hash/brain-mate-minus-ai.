@@ -1,0 +1,120 @@
+{
+  "entities": {
+    "userProfile": {
+      "title": "UserProfile",
+      "description": "User profile with role-based access control and account status",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["owner", "admin", "user"] },
+        "status": { "type": "string", "enum": ["active", "suspended"] },
+        "apiCallsCount": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" }
+      },
+      "required": ["id", "email", "role", "status", "createdAt"]
+    },
+    "auditLog": {
+      "title": "AuditLog",
+      "description": "Immutable security and administrative action audit logs",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "adminEmail": { "type": "string", "format": "email" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "warning", "critical"] },
+        "timestamp": { "type": "number" }
+      },
+      "required": ["id", "adminEmail", "action", "details", "severity", "timestamp"]
+    },
+    "appConfig": {
+      "title": "AppConfig",
+      "description": "Global application configuration and feature toggles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "maintenanceMode": { "type": "boolean" },
+        "maintenanceMessage": { "type": "string" },
+        "aiRateLimitPerMin": { "type": "number" },
+        "activeAnnouncement": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "maintenanceMode", "updatedBy", "updatedAt"]
+    },
+    "supportTicket": {
+      "title": "SupportTicket",
+      "description": "User feedback, bug reports, and support requests",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "userEmail": { "type": "string", "format": "email" },
+        "subject": { "type": "string" },
+        "message": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "in_progress", "resolved"] },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "userEmail", "subject", "message", "status", "createdAt"]
+    },
+    "userNote": {
+      "title": "UserNote",
+      "description": "Private user notes and knowledge records",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "category": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "updatedAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "title", "content", "createdAt"]
+    },
+    "userTask": {
+      "title": "UserTask",
+      "description": "Private user tasks and reminders",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "priority": { "type": "string", "enum": ["low", "medium", "high", "urgent"] },
+        "isCompleted": { "type": "boolean" },
+        "createdAt": { "type": "number" }
+      },
+      "required": ["id", "userId", "title", "priority", "isCompleted", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "userProfile",
+      "description": "User account profiles and status"
+    },
+    "/users/{userId}/notes/{noteId}": {
+      "schema": "userNote",
+      "description": "User private notes subcollection"
+    },
+    "/users/{userId}/tasks/{taskId}": {
+      "schema": "userTask",
+      "description": "User private tasks subcollection"
+    },
+    "/audit_logs/{logId}": {
+      "schema": "auditLog",
+      "description": "Administrative security audit trail"
+    },
+    "/app_configs/{configId}": {
+      "schema": "appConfig",
+      "description": "Application controls, maintenance flags, and announcements"
+    },
+    "/support_tickets/{ticketId}": {
+      "schema": "supportTicket",
+      "description": "Support tickets and user feedback"
+    }
+  }
+}

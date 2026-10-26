@@ -1,0 +1,144 @@
+name: Build Brain Mate Android APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Brain Mate APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Accept Android SDK Licenses
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+
+      - name: Prepare Web Assets & Dependencies
+        run: |
+          test -f index.html || {
+            echo "ERROR: index.html is missing from repository root."
+            exit 1
+          }
+
+          if [ -f package.json ]; then
+            echo "package.json found. Installing dependencies..."
+            if [ -f package-lock.json ]; then
+              npm ci --legacy-peer-deps || npm install --legacy-peer-deps
+            else
+              npm install --legacy-peer-deps
+            fi
+
+            # Build production web bundle if build script exists
+            if grep -q '"build"' package.json; then
+              echo "Building web bundle via npm run build..."
+              npm run build
+            else
+              mkdir -p dist
+              cp -r index.html dist/
+            fi
+          else
+            echo "Standalone index.html repository detected. Preparing dist directory..."
+            mkdir -p dist
+            cp -r index.html dist/
+            if [ -d public ]; then cp -r public/* dist/ 2>/dev/null || true; fi
+            if [ -d assets ]; then cp -r assets dist/ 2>/dev/null || true; fi
+            if [ -d css ]; then cp -r css dist/ 2>/dev/null || true; fi
+            if [ -d js ]; then cp -r js dist/ 2>/dev/null || true; fi
+            if [ -d images ]; then cp -r images dist/ 2>/dev/null || true; fi
+
+            echo "Initializing npm package and installing Capacitor..."
+            npm init -y
+            npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
+          fi
+
+      - name: Configure Capacitor
+        run: |
+          # Ensure capacitor.config.json exists and points to dist
+          if [ ! -f capacitor.config.json ]; then
+            cat > capacitor.config.json <<'EOF'
+          {
+            "appId": "com.brainmate.ai",
+            "appName": "Brain Mate",
+            "webDir": "dist",
+            "server": {
+              "androidScheme": "https",
+              "cleartext": true
+            },
+            "android": {
+              "allowMixedContent": true,
+              "captureInput": true,
+              "webContentsDebuggingEnabled": true
+            }
+          }
+          EOF
+          fi
+
+      - name: Setup & Sync Android Platform
+        run: |
+          # Add android platform only if native folder does not already exist
+          if [ ! -d android ] || [ ! -f android/gradlew ]; then
+            echo "Adding Android native project..."
+            npx cap add android
+          else
+            echo "Existing Android native project detected. Skipping add..."
+          fi
+
+          echo "Syncing web assets to native Android project..."
+          npx cap sync android
+
+      - name: Build Debug APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Verify and Prepare APK
+        run: |
+          mkdir -p output
+          APK=$(find android/app/build/outputs/apk/debug -name "*.apk" -type f | head -n 1)
+          if [ -z "$APK" ]; then
+            APK=$(find android/app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          fi
+
+          if [ -z "$APK" ] || [ ! -f "$APK" ]; then
+            echo "ERROR: APK was not generated."
+            find android/app/build/outputs -type f || true
+            exit 1
+          fi
+
+          echo "Found APK: $APK"
+          cp "$APK" output/Brain-Mate.apk
+          ls -lh output/Brain-Mate.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Brain-Mate-APK
+          path: output/Brain-Mate.apk
+          if-no-files-found: error
+          retention-days: 30

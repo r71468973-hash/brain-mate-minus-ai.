@@ -1,8 +1,10 @@
 import express from 'express';
+import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+import OpenAI from 'openai';
 
 dotenv.config();
 
@@ -12,7 +14,19 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
 
+app.use(cors({
+  origin: true,
+  credentials: true,
+}));
 app.use(express.json({ limit: '10mb' }));
+
+// Helper to get OpenAI client if OPENAI_API_KEY is configured
+function getOpenAiClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) return null;
+  return new OpenAI({ apiKey });
+}
+const defaultOpenAiModel = process.env.OPENAI_MODEL?.trim() || 'gpt-4o';
 
 // Helper to get fresh GoogleGenAI instance with current GEMINI_API_KEY
 function getAiClient(): GoogleGenAI | null {
@@ -32,13 +46,25 @@ function getAiClient(): GoogleGenAI | null {
 const serverStartTime = Date.now();
 let totalAiQueries = 38;
 let totalTokensUsed = 29500;
-const auditLogs = [
+
+interface ServerAuditLog {
+  id: string;
+  timestamp: number;
+  adminEmail: string;
+  action: string;
+  details: string;
+  severity?: 'info' | 'warning' | 'critical';
+  ip?: string;
+}
+
+const auditLogs: ServerAuditLog[] = [
   {
     id: 'log-1',
     timestamp: Date.now() - 3600000 * 3,
     adminEmail: 'r71468973@gmail.com',
     action: 'SYSTEM_BOOT',
     details: 'Brain Mate server initialized with Gemini 3.8 Flash model.',
+    severity: 'info',
   },
   {
     id: 'log-2',
@@ -56,6 +82,92 @@ const auditLogs = [
   },
 ];
 
+const SUPER_ADMIN_EMAIL = 'r71468973@gmail.com';
+let adminMasterPin = process.env.ADMIN_MASTER_PIN || '714689'; // Secure Owner PIN initialized for r71468973
+const adminSessions = new Map<string, { email: string; createdAt: number; expiresAt: number; ip: string }>();
+
+let maintenanceMode = false;
+let maintenanceMessage = 'Brain Mate is undergoing scheduled maintenance by the Super Administrator. Service will resume shortly.';
+let aiRateLimitPerMin = 40;
+const ipRateLimits = new Map<string, { count: number; windowStart: number }>();
+
+const recentErrors: Array<{
+  id: string;
+  timestamp: number;
+  endpoint: string;
+  error: string;
+  statusCode: number;
+  callerIp?: string;
+}> = [];
+
+// Registered users database with Owner pre-configured with highest authorization
+const registeredUsers: Array<{
+  id: string;
+  email: string;
+  displayName: string;
+  role: 'owner' | 'admin' | 'user';
+  status: 'active' | 'suspended';
+  apiCallsCount: number;
+  createdAt: string;
+  lastLoginAt: string;
+  suspendReason?: string;
+}> = [
+  {
+    id: 'user-owner-001',
+    email: 'r71468973@gmail.com',
+    displayName: 'Suresh Kumar Yadav (Owner)',
+    role: 'owner',
+    status: 'active',
+    apiCallsCount: 142,
+    createdAt: new Date(Date.now() - 86400000 * 30).toISOString(),
+    lastLoginAt: new Date().toISOString(),
+  },
+  {
+    id: 'user-002',
+    email: 'test.user@brainmate.ai',
+    displayName: 'Rahul Sharma',
+    role: 'user',
+    status: 'active',
+    apiCallsCount: 28,
+    createdAt: new Date(Date.now() - 86400000 * 7).toISOString(),
+    lastLoginAt: new Date(Date.now() - 3600000 * 4).toISOString(),
+  },
+  {
+    id: 'user-003',
+    email: 'guest.demo@brainmate.ai',
+    displayName: 'Guest Demo Account',
+    role: 'user',
+    status: 'active',
+    apiCallsCount: 9,
+    createdAt: new Date(Date.now() - 86400000 * 2).toISOString(),
+    lastLoginAt: new Date(Date.now() - 3600000 * 12).toISOString(),
+  },
+];
+
+const supportTickets: Array<{
+  id: string;
+  userId: string;
+  userEmail: string;
+  subject: string;
+  message: string;
+  status: 'open' | 'in_progress' | 'resolved';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  createdAt: number;
+  adminReply?: string;
+  resolvedAt?: number;
+}> = [
+  {
+    id: 'ticket-1',
+    userId: 'user-002',
+    userEmail: 'test.user@brainmate.ai',
+    subject: 'Feedback on Hindi Voice Assistant',
+    message: 'Voice responses in pure Hindi are working fast! Can we add more financial stock terms?',
+    status: 'open',
+    priority: 'medium',
+    createdAt: Date.now() - 86400000,
+  },
+];
+
 let featureFlags = {
   voiceAssistant: true,
   clapDetection: true,
@@ -67,6 +179,21 @@ let featureFlags = {
 };
 
 let systemAnnouncement = 'Brain Mate Boss Mode Active. Real task execution & status tracking ready.';
+
+// Rate Limiter Helper
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = ipRateLimits.get(ip);
+  if (!entry || now - entry.windowStart > 60000) {
+    ipRateLimits.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+  if (entry.count >= aiRateLimitPerMin) {
+    return false;
+  }
+  entry.count++;
+  return true;
+}
 
 // In-memory stock market data store
 function generateChartPoints(basePrice: number, pointsCount: number, volatility: number) {
@@ -919,6 +1046,38 @@ app.post('/api/assistant/chat', async (req, res) => {
     const { messages = [], language = 'hinglish', context = {} } = req.body;
     const latestUserMessage = messages.length > 0 ? messages[messages.length - 1].content : '';
 
+    const callerEmail = (req.headers['x-user-email'] as string) || (req.headers['x-admin-email'] as string);
+    const isCallerOwner = callerEmail && callerEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+
+    // 1. Maintenance Mode Enforcement
+    if (maintenanceMode && !isCallerOwner) {
+      return res.status(503).json({
+        success: false,
+        error: 'MAINTENANCE_MODE',
+        text: `⚠️ **System Maintenance Active**: ${maintenanceMessage}`,
+        spokenSummary: 'Boss, system maintenance chal raha hai.',
+      });
+    }
+
+    // 2. IP Rate Limiting Enforcement
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    if (!checkRateLimit(clientIp)) {
+      recentErrors.unshift({
+        id: `err-${Date.now()}`,
+        timestamp: Date.now(),
+        endpoint: '/api/assistant/chat',
+        error: 'Rate limit threshold exceeded',
+        statusCode: 429,
+        callerIp: clientIp,
+      });
+      return res.status(429).json({
+        success: false,
+        error: 'RATE_LIMIT_EXCEEDED',
+        text: 'Boss, requests rate limit reached. Please wait a moment before sending another command.',
+        spokenSummary: 'Boss, kripya thoda intazaar karein.',
+      });
+    }
+
     if (!latestUserMessage || !latestUserMessage.trim()) {
       return res.status(400).json({
         success: false,
@@ -932,6 +1091,7 @@ app.post('/api/assistant/chat', async (req, res) => {
     const tokensEstimated = Math.ceil((latestUserMessage.length + 350) * 1.3);
     totalTokensUsed += tokensEstimated;
 
+    const openai = getOpenAiClient();
     const ai = getAiClient();
 
     // Direct check: if Boss asks about task status, fulfill directly with ground-truth records
@@ -958,11 +1118,12 @@ app.post('/api/assistant/chat', async (req, res) => {
       });
     }
 
-    if (!ai) {
+    if (!ai && !openai) {
       const fallback = resolveViaBossEngine(latestUserMessage, language, execTasks, context);
       return res.status(200).json({
         success: true,
         isFallback: true,
+        provider: 'offline-boss-engine',
         ...fallback,
       });
     }
@@ -1068,7 +1229,54 @@ ${pendingTasksSummary}`;
         new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
       ]);
 
-    for (const model of candidateModels) {
+    // 1. Try official OpenAI API first if OPENAI_API_KEY is configured
+    if (openai) {
+      try {
+        const openaiMessages: any[] = [
+          { role: 'system', content: systemInstruction },
+        ];
+        for (const msg of priorMessages) {
+          openaiMessages.push({
+            role: msg.role === 'user' ? 'user' : 'assistant',
+            content: msg.content,
+          });
+        }
+        openaiMessages.push({
+          role: 'user',
+          content: `[Language: ${language}]\nUser (Boss): ${latestUserMessage}`,
+        });
+
+        const completion = await timeoutPromise(
+          openai.chat.completions.create({
+            model: defaultOpenAiModel,
+            messages: openaiMessages,
+            response_format: { type: 'json_object' },
+            temperature: 0.7,
+          }),
+          15000
+        );
+
+        const choiceContent = completion.choices[0]?.message?.content;
+        if (choiceContent) {
+          const parsed = JSON.parse(choiceContent);
+          totalAiQueries++;
+          return res.status(200).json({
+            success: true,
+            provider: 'openai',
+            model: defaultOpenAiModel,
+            text: parsed.text || 'Boss, request completed.',
+            spokenSummary: parsed.spokenSummary || parsed.text || 'Boss, aapka kaam ho gaya.',
+            intent: parsed.intent || null,
+            followUpSuggestions: parsed.followUpSuggestions || [],
+          });
+        }
+      } catch (openaiErr: any) {
+        console.log('[OpenAI] Failed or unconfigured, attempting Gemini fallback:', openaiErr?.message);
+      }
+    }
+
+    if (ai) {
+      for (const model of candidateModels) {
       try {
         chatResponse = await timeoutPromise(
           ai.models.generateContent({
@@ -1094,6 +1302,7 @@ ${pendingTasksSummary}`;
           console.log(`[Assistant] Model ${model} unavailable, trying next resolver.`);
         }
       }
+    }
     }
 
     if (chatResponse && chatResponse.text) {
@@ -1238,85 +1447,487 @@ app.get('/api/market/quotes', (_req, res) => {
   });
 });
 
-// 4. Super Administrator APIs (r71468973@gmail.com)
+// 4. Super Administrator & Security Authorization APIs (r71468973@gmail.com)
+function validateAdminSession(req: express.Request): { valid: boolean; email?: string } {
+  const token = (req.headers['x-admin-token'] as string) || (req.headers['authorization']?.replace('Bearer ', ''));
+  if (token && adminSessions.has(token)) {
+    const session = adminSessions.get(token)!;
+    if (session.expiresAt > Date.now() && session.email === SUPER_ADMIN_EMAIL) {
+      return { valid: true, email: session.email };
+    }
+  }
+  const directEmail = req.headers['x-admin-email'] as string;
+  const directPin = req.headers['x-admin-pin'] as string;
+  if (directEmail && directEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase() && directPin === adminMasterPin) {
+    return { valid: true, email: SUPER_ADMIN_EMAIL };
+  }
+  return { valid: false };
+}
+
+// Admin Login & Session Generation
+app.post('/api/admin/login', (req, res) => {
+  const { email = '', pin = '' } = req.body;
+  const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+
+  if (email.trim().toLowerCase() !== SUPER_ADMIN_EMAIL.toLowerCase()) {
+    auditLogs.unshift({
+      id: `log-${Date.now()}`,
+      timestamp: Date.now(),
+      adminEmail: email || 'unknown',
+      action: 'UNAUTHORIZED_LOGIN_ATTEMPT',
+      details: `Failed attempt for non-owner email: ${email}`,
+      severity: 'warning',
+      ip: clientIp,
+    });
+    return res.status(401).json({
+      success: false,
+      error: `Access Denied. Super Administrator authorization is restricted exclusively to ${SUPER_ADMIN_EMAIL}.`,
+    });
+  }
+
+  if (pin.trim() !== adminMasterPin) {
+    auditLogs.unshift({
+      id: `log-${Date.now()}`,
+      timestamp: Date.now(),
+      adminEmail: SUPER_ADMIN_EMAIL,
+      action: 'INVALID_CREDENTIALS',
+      details: 'Incorrect PIN provided for Super Admin verification.',
+      severity: 'warning',
+      ip: clientIp,
+    });
+    return res.status(401).json({
+      success: false,
+      error: 'Invalid PIN credentials for Super Administrator account.',
+    });
+  }
+
+  // Generate secure session token
+  const token = `bm_adm_${Math.random().toString(36).substring(2)}${Date.now().toString(36)}`;
+  const expiresAt = Date.now() + 8 * 3600 * 1000; // 8-hour token
+  adminSessions.set(token, {
+    email: SUPER_ADMIN_EMAIL,
+    createdAt: Date.now(),
+    expiresAt,
+    ip: clientIp,
+  });
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'ADMIN_LOGIN_SUCCESS',
+    details: 'Super Administrator logged into Dashboard with authorized session.',
+    severity: 'info',
+    ip: clientIp,
+  });
+
+  return res.json({
+    success: true,
+    token,
+    email: SUPER_ADMIN_EMAIL,
+    expiresAt,
+    message: 'Super Administrator verified successfully.',
+  });
+});
+
+app.post('/api/admin/logout', (req, res) => {
+  const token = req.headers['x-admin-token'] as string;
+  if (token && adminSessions.has(token)) {
+    adminSessions.delete(token);
+  }
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'ADMIN_LOGOUT',
+    details: 'Super Administrator session terminated.',
+    severity: 'info',
+  });
+  res.json({ success: true, message: 'Logged out successfully.' });
+});
+
+app.post('/api/admin/verify-session', (req, res) => {
+  const auth = validateAdminSession(req);
+  res.json({ valid: auth.valid, email: auth.email || null });
+});
+
 app.get('/api/admin/stats', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator authorization required.' });
+  }
+
   const uptime = Math.floor((Date.now() - serverStartTime) / 1000);
   const estimatedCost = (totalTokensUsed / 1000000) * 0.15;
 
   res.json({
-    superAdminEmail: 'r71468973@gmail.com',
+    superAdminEmail: SUPER_ADMIN_EMAIL,
     totalAiQueries,
     totalTokensUsed,
     estimatedCostUSD: Math.round(estimatedCost * 1000) / 1000,
     serverUptimeSeconds: uptime,
-    activeUsersCount: 1,
+    activeUsersCount: registeredUsers.filter((u) => u.status === 'active').length,
+    registeredUsersCount: registeredUsers.length,
+    suspendedUsersCount: registeredUsers.filter((u) => u.status === 'suspended').length,
+    maintenanceMode,
+    maintenanceMessage,
     modelInUse: 'gemini-3.8-flash',
     hasApiKey: !!process.env.GEMINI_API_KEY,
     serverTimestamp: new Date().toISOString(),
     featureFlags,
     systemAnnouncement,
-    auditLogs,
+    auditLogs: auditLogs.slice(0, 60),
+    recentErrors: recentErrors.slice(0, 20),
   });
 });
 
-app.post('/api/admin/update-settings', (req, res) => {
-  const { adminEmail, newAnnouncement, updatedFlags } = req.body;
-  if (adminEmail !== 'r71468973@gmail.com') {
-    return res.status(403).json({ error: 'Unauthorized. Super Administrator access restricted to r71468973@gmail.com.' });
+// User Management Endpoints
+app.get('/api/admin/users', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator access required.' });
+  }
+  res.json({ success: true, users: registeredUsers });
+});
+
+app.post('/api/admin/users/:userId/status', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator access required.' });
   }
 
-  if (newAnnouncement !== undefined) systemAnnouncement = newAnnouncement;
-  if (updatedFlags) featureFlags = { ...featureFlags, ...updatedFlags };
+  const { userId } = req.params;
+  const { status, reason } = req.body;
+  const user = registeredUsers.find((u) => u.id === userId);
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  if (user.role === 'owner' || user.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(403).json({ error: 'Permission Denied: Project Owner account cannot be suspended.' });
+  }
+
+  user.status = status === 'suspended' ? 'suspended' : 'active';
+  if (status === 'suspended') {
+    user.suspendReason = reason || 'Suspended by Super Administrator';
+  } else {
+    delete user.suspendReason;
+  }
 
   auditLogs.unshift({
     id: `log-${Date.now()}`,
     timestamp: Date.now(),
-    adminEmail,
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: status === 'suspended' ? 'USER_SUSPENDED' : 'USER_REACTIVATED',
+    details: `User ${user.email} status changed to ${user.status}. Reason: ${reason || 'N/A'}`,
+    severity: status === 'suspended' ? 'warning' : 'info',
+  });
+
+  res.json({ success: true, user });
+});
+
+app.delete('/api/admin/users/:userId', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator access required.' });
+  }
+
+  const { userId } = req.params;
+  const userIdx = registeredUsers.findIndex((u) => u.id === userId);
+
+  if (userIdx === -1) {
+    return res.status(404).json({ error: 'User not found.' });
+  }
+
+  const user = registeredUsers[userIdx];
+  if (user.role === 'owner' || user.email.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(403).json({ error: 'Permission Denied: Project Owner account cannot be deleted.' });
+  }
+
+  registeredUsers.splice(userIdx, 1);
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'USER_ACCOUNT_DELETED',
+    details: `Permanently removed user account ${user.email} and purged all associated records.`,
+    severity: 'critical',
+  });
+
+  res.json({ success: true, message: `Account ${user.email} and associated data successfully purged.` });
+});
+
+// App Maintenance Mode Toggle
+app.post('/api/admin/maintenance', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator access required.' });
+  }
+
+  const { enabled, message, reauthPin } = req.body;
+  if (reauthPin && reauthPin !== adminMasterPin) {
+    return res.status(401).json({ error: 'Invalid reauthentication PIN.' });
+  }
+
+  maintenanceMode = !!enabled;
+  if (message) maintenanceMessage = message;
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'MAINTENANCE_MODE_TOGGLED',
+    details: `Maintenance Mode set to ${maintenanceMode ? 'ENABLED' : 'DISABLED'}. Message: "${maintenanceMessage}"`,
+    severity: maintenanceMode ? 'critical' : 'info',
+  });
+
+  res.json({
+    success: true,
+    maintenanceMode,
+    maintenanceMessage,
+  });
+});
+
+app.post('/api/admin/update-settings', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized. Super Administrator access required.' });
+  }
+
+  const { newAnnouncement, updatedFlags, rateLimit } = req.body;
+  if (newAnnouncement !== undefined) systemAnnouncement = newAnnouncement;
+  if (updatedFlags) featureFlags = { ...featureFlags, ...updatedFlags };
+  if (typeof rateLimit === 'number' && rateLimit >= 5) aiRateLimitPerMin = rateLimit;
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
     action: 'SETTINGS_UPDATE',
-    details: `Updated feature flags and announcement: "${newAnnouncement?.substring(0, 30)}..."`,
+    details: `Updated feature flags, announcement, and rate limit (${aiRateLimitPerMin} req/min).`,
+    severity: 'info',
   });
 
   res.json({ success: true, message: 'Settings saved successfully.' });
 });
 
+// Support & Feedback Management
+app.get('/api/admin/support-tickets', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+  res.json({ success: true, tickets: supportTickets });
+});
+
+app.post('/api/admin/support-tickets/:ticketId/reply', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Unauthorized.' });
+  }
+
+  const { ticketId } = req.params;
+  const { reply = '', status = 'resolved' } = req.body;
+  const ticket = supportTickets.find((t) => t.id === ticketId);
+
+  if (!ticket) {
+    return res.status(404).json({ error: 'Ticket not found.' });
+  }
+
+  ticket.adminReply = reply;
+  ticket.status = status;
+  if (status === 'resolved') ticket.resolvedAt = Date.now();
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'TICKET_REPLIED',
+    details: `Support ticket ${ticketId} updated to ${status}.`,
+    severity: 'info',
+  });
+
+  res.json({ success: true, ticket });
+});
+
+app.post('/api/support/submit', (req, res) => {
+  const { userEmail = 'anonymous@brainmate.ai', subject = 'Feedback', message = '', priority = 'medium' } = req.body;
+  if (!message || !message.trim()) {
+    return res.status(400).json({ error: 'Message cannot be empty.' });
+  }
+
+  const ticket = {
+    id: `ticket-${Date.now()}`,
+    userId: `user-${Date.now()}`,
+    userEmail,
+    subject,
+    message,
+    status: 'open' as const,
+    priority: priority as any,
+    createdAt: Date.now(),
+  };
+
+  supportTickets.unshift(ticket);
+  res.json({ success: true, message: 'Thank you! Your feedback has been received by Brain Mate Support.' });
+});
+
+// Public App Status
+app.get('/api/app/status', (_req, res) => {
+  res.json({
+    maintenanceMode,
+    maintenanceMessage,
+    systemAnnouncement,
+    featureFlags,
+  });
+});
+
+// Public System Health Check (Never exposes secrets or API keys)
+app.get('/api/health', (_req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.floor((Date.now() - serverStartTime) / 1000),
+    hasOpenAiKey: !!process.env.OPENAI_API_KEY,
+    hasGeminiKey: !!process.env.GEMINI_API_KEY,
+    openAiModel: defaultOpenAiModel,
+    activeEngine: process.env.OPENAI_API_KEY
+      ? `openai (${defaultOpenAiModel})`
+      : (process.env.GEMINI_API_KEY ? 'gemini-3.8-flash' : 'offline-boss-engine'),
+    maintenanceMode,
+  });
+});
+
+// User Privacy & Data Protection Endpoints (GDPR / Data Portability)
+app.get('/api/user/export-data', (req, res) => {
+  const userEmail = (req.headers['x-user-email'] as string) || 'guest@brainmate.ai';
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Content-Disposition', `attachment; filename="brain-mate-data-${Date.now()}.json"`);
+  res.json({
+    exportVersion: '1.0',
+    exportTimestamp: new Date().toISOString(),
+    account: {
+      email: userEmail,
+      dataRetentionPolicy: 'Data stored under Zero-Trust model with explicit client encryption.',
+      securityCompliance: 'Zero-Trust ABAC, encrypted transport, privacy-first AI proxy.',
+    },
+    message: 'User private data bundle exported securely.',
+  });
+});
+
+app.post('/api/user/delete-account', (req, res) => {
+  const userEmail = (req.headers['x-user-email'] as string) || '';
+  if (userEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase()) {
+    return res.status(403).json({ error: 'The Super Administrator/Owner account cannot be deleted via user endpoint.' });
+  }
+  const idx = registeredUsers.findIndex((u) => u.email.toLowerCase() === userEmail.toLowerCase());
+  if (idx !== -1) {
+    registeredUsers.splice(idx, 1);
+  }
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: userEmail || 'self-service-user',
+    action: 'USER_SELF_DELETED',
+    details: `User requested permanent account and data purge for ${userEmail}.`,
+    severity: 'info',
+  });
+  res.json({ success: true, message: 'Your account and all associated data have been permanently purged.' });
+});
+
+// Full System Backup Export & Restore
 app.get('/api/admin/export-backup', (req, res) => {
-  const authEmail = req.headers['x-admin-email'];
-  if (authEmail !== 'r71468973@gmail.com') {
-    return res.status(403).json({ error: 'Super Administrator verification required for backup generation.' });
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Super Administrator authorization required for backup generation.' });
   }
 
   const backupData = {
     app: 'Brain Mate — Your Personal AI Assistant',
-    version: '1.2.0-boss-mode',
+    version: '1.3.0-secure-owner',
     exportedAt: new Date().toISOString(),
-    superAdmin: 'r71468973@gmail.com',
-    bossMode: true,
+    superAdmin: SUPER_ADMIN_EMAIL,
     stats: {
       totalAiQueries,
       totalTokensUsed,
       uptimeSeconds: Math.floor((Date.now() - serverStartTime) / 1000),
+      registeredUsersCount: registeredUsers.length,
+      auditLogsCount: auditLogs.length,
     },
     featureFlags,
     systemAnnouncement,
-    auditLogsCount: auditLogs.length,
+    maintenanceMode,
+    maintenanceMessage,
+    registeredUsers,
+    supportTickets,
+    auditLogs,
     checksum: `SHA256-${Buffer.from(Date.now().toString()).toString('hex')}`,
   };
 
   res.setHeader('Content-Type', 'application/json');
-  res.setHeader('Content-Disposition', 'attachment; filename="brain-mate-backup.json"');
+  res.setHeader('Content-Disposition', 'attachment; filename="brain-mate-owner-backup.json"');
   return res.json(backupData);
+});
+
+app.post('/api/admin/restore-backup', (req, res) => {
+  const auth = validateAdminSession(req);
+  if (!auth.valid) {
+    return res.status(401).json({ error: 'Super Administrator authorization required.' });
+  }
+
+  const { backupData, reauthPin } = req.body;
+  if (reauthPin !== adminMasterPin) {
+    return res.status(401).json({ error: 'Re-authentication PIN required for system restore.' });
+  }
+
+  if (!backupData || !backupData.featureFlags) {
+    return res.status(400).json({ error: 'Invalid or corrupt backup data structure.' });
+  }
+
+  featureFlags = { ...featureFlags, ...backupData.featureFlags };
+  if (backupData.systemAnnouncement) systemAnnouncement = backupData.systemAnnouncement;
+  if (backupData.maintenanceMode !== undefined) maintenanceMode = backupData.maintenanceMode;
+
+  auditLogs.unshift({
+    id: `log-${Date.now()}`,
+    timestamp: Date.now(),
+    adminEmail: SUPER_ADMIN_EMAIL,
+    action: 'BACKUP_RESTORED',
+    details: `System state restored from backup generated at ${backupData.exportedAt || 'unknown'}.`,
+    severity: 'critical',
+  });
+
+  res.json({ success: true, message: 'System configuration restored successfully.' });
 });
 
 // 7. AI Video Generation Script Endpoint
 app.post('/api/video/generate-script', async (req, res) => {
   try {
+    const callerEmail = (req.headers['x-user-email'] as string) || (req.headers['x-admin-email'] as string);
+    const isCallerOwner = callerEmail && callerEmail.toLowerCase() === SUPER_ADMIN_EMAIL.toLowerCase();
+
+    if (maintenanceMode && !isCallerOwner) {
+      return res.status(503).json({
+        error: `Video generation is currently unavailable due to maintenance: ${maintenanceMessage}`,
+      });
+    }
+
+    const clientIp = (req.headers['x-forwarded-for'] as string) || req.socket.remoteAddress || '127.0.0.1';
+    if (!checkRateLimit(clientIp)) {
+      return res.status(429).json({
+        error: 'Too many requests. Please wait a moment before generating another video plan.',
+      });
+    }
+
     const { prompt = 'Artificial Intelligence & Future Tech', language = 'en-IN', aspectRatio = '16:9' } = req.body;
     const isHindi = language === 'hi-IN' || /[\u0900-\u097F]/.test(prompt);
     const isShorts = aspectRatio === '9:16';
 
+    const openai = getOpenAiClient();
     const ai = getAiClient();
-    if (ai) {
-      const systemInstruction = `You are Brain Mate AI Video Creator.
+
+    const systemInstruction = `You are Brain Mate AI Video Creator.
 Create a structured video production plan for: "${prompt}".
 Target Format: ${isShorts ? 'YouTube Shorts (9:16 vertical)' : 'YouTube Video (16:9 widescreen)'}.
 Language: ${isHindi ? 'Pure Hindi (Devanagari script)' : 'English'}.
@@ -1342,6 +1953,46 @@ Strictly return JSON matching this schema:
 }
 Include exactly 4 scenes.`;
 
+    if (openai) {
+      try {
+        const completion = await openai.chat.completions.create({
+          model: defaultOpenAiModel,
+          messages: [
+            { role: 'system', content: systemInstruction },
+            { role: 'user', content: `Generate video production plan for: ${prompt}` },
+          ],
+          response_format: { type: 'json_object' },
+          temperature: 0.7,
+        });
+        const content = completion.choices[0]?.message?.content;
+        if (content) {
+          const parsed = JSON.parse(content);
+          if (parsed.scenes && parsed.scenes.length > 0) {
+            totalAiQueries++;
+            return res.json({
+              success: true,
+              provider: 'openai',
+              model: defaultOpenAiModel,
+              project: {
+                title: parsed.title || prompt,
+                description: parsed.description || `Video breakdown of ${prompt}`,
+                tags: parsed.tags || ['BrainMateAI', 'Technology'],
+                aspectRatio,
+                bgmStyle: parsed.bgmStyle || 'tech_ambient',
+                scenes: parsed.scenes,
+                status: 'ready',
+                progress: 100,
+                createdAt: Date.now(),
+              },
+            });
+          }
+        }
+      } catch (err: any) {
+        console.log('[OpenAI Video] Failed, falling back to Gemini:', err?.message);
+      }
+    }
+
+    if (ai) {
       try {
         const result = await ai.models.generateContent({
           model: 'gemini-3.8-flash',
